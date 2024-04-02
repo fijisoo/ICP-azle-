@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Server, StableBTreeMap, ic } from 'azle';
+import {Server, StableBTreeMap, ic, query, text, update, Record, Vec, Some, blob, Opt, nat16, CandidType, bool} from 'azle';
 import express from 'express';
 
 /**
@@ -28,6 +28,14 @@ class Message {
     createdAt: Date;
     updatedAt: Date | null
 }
+
+const MessageIType = Record({
+    id: text,
+    title: text,
+    body: text,
+    attachmentURL: text,
+    createdAt: text,
+});
 
 const messagesStorage = StableBTreeMap<string, Message>(0);
 
@@ -84,4 +92,15 @@ export default Server(() => {
     });
 
     return app.listen();
-});
+},
+    {
+        getMessages: query([], Vec(MessageIType), () => {
+            return messagesStorage.values();
+        }),
+        getKeys: query([], Vec(text), () => {
+            return messagesStorage.keys(0, 2);
+        }),
+        getMessage: query([text], Opt(MessageIType), (id: string) => {
+            return messagesStorage.get(id);
+        }),
+    });

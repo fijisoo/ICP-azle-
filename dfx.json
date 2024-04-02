@@ -4,7 +4,7 @@
       "type": "custom",
       "main": "src/index.ts",
       "candid": "src/index.did",
-      "candid_gen": "http",
+      "candid_gen": "automatic",
       "build": "npx azle message_board",
       "wasm": ".azle/message_board/message_board.wasm",
       "gzip": true,
@@ -17,7 +17,11 @@
           "name": "cdk:name",
           "content": "azle"
         }
-      ]
+      ],
+      "declarations": {
+        "output": "test/dfx_generated/message_board",
+        "node_compatibility": true
+      }
     }
   }
 }
