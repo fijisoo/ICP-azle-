@@ -1,6 +1,6 @@
-import { v4 as uuidv4 } from 'uuid';
-import {Server, StableBTreeMap, ic, query, text, update, Record, Vec, Some, blob, Opt, nat16, CandidType, bool} from 'azle';
-import express from 'express';
+import {v4 as uuidv4} from "uuid";
+import {Err, ic, Ok, Opt, query, Record, Result, Server, StableBTreeMap, text, update, Variant, Vec,} from "azle";
+import express from "express";
 
 /**
  * `messagesStorage` - it's a key-value datastructure that is used to store messages.
@@ -25,8 +25,8 @@ class Message {
     title: string;
     body: string;
     attachmentURL: string;
-    createdAt: Date;
-    updatedAt: Date | null
+    createdAt: string;
+    updatedAt: string | null;
 }
 
 const MessageIType = Record({
@@ -35,72 +35,167 @@ const MessageIType = Record({
     body: text,
     attachmentURL: text,
     createdAt: text,
+    updatedAt: text,
 });
 
 const messagesStorage = StableBTreeMap<string, Message>(0);
+
+const Error = Variant({
+    NotFound: text,
+    InvalidPayload: text,
+    DataExist: text,
+});
 
 function getCurrentDate() {
     const timestamp = new Number(ic.time());
     return new Date(timestamp.valueOf() / 1000_000);
 }
 
-export default Server(() => {
-    const app = express();
-    app.use(express.json());
+export default Server<any>(
+    () => {
+        const app = express();
+        app.use(express.json());
 
-    app.post("/messages", (req, res) => {
-        const message: Message =  {id: uuidv4(), createdAt: getCurrentDate(), ...req.body};
-        messagesStorage.insert(message.id, message);
-        res.json(message);
-    });
+        app.post("/messages", (req, res) => {
+            const message: Message = {
+                id: uuidv4(),
+                createdAt: getCurrentDate().toString(),
+                body: req.body?.body.toString(),
+                updatedAt: getCurrentDate().toString(),
+                title: req.body?.title.toString(),
+                attachmentURL: "",
+            };
+            messagesStorage.insert(message.id, message);
+            res.json(message);
+        });
 
-    app.get("/messages", (req, res) => {
-        res.json(messagesStorage.values());
-    });
+        app.get("/messages", (req, res) => {
+            res.json(messagesStorage.values());
+        });
 
-    app.get("/messages/:id", (req, res) => {
-        const messageId = req.params.id;
-        const messageOpt = messagesStorage.get(messageId);
-        if ("None" in messageOpt) {
-            res.status(404).send(`the message with id=${messageId} not found`);
-        } else {
-            res.json(messageOpt.Some);
-        }
-    });
+        app.get("/messages/:id", (req, res) => {
+            const messageId = req.params.id;
+            const messageOpt = messagesStorage.get(messageId);
+            if ("None" in messageOpt) {
+                res.status(404).send(`the message with id=${messageId} not found`);
+            } else {
+                res.json(messageOpt.Some);
+            }
+        });
 
-    app.put("/messages/:id", (req, res) => {
-        const messageId = req.params.id;
-        const messageOpt = messagesStorage.get(messageId);
-        if ("None" in messageOpt) {
-            res.status(400).send(`couldn't update a message with id=${messageId}. message not found`);
-        } else {
-            const message = messageOpt.Some;
-            const updatedMessage = { ...message, ...req.body, updatedAt: getCurrentDate()};
-            messagesStorage.insert(message.id, updatedMessage);
-            res.json(updatedMessage);
-        }
-    });
+        app.put("/messages/:id", (req, res) => {
+            const messageId = req.params.id;
+            const messageOpt = messagesStorage.get(messageId);
+            if ("None" in messageOpt) {
+                res
+                    .status(400)
+                    .send(
+                        `couldn't update a message with id=${messageId}. message not found`,
+                    );
+            } else {
+                const message = messageOpt.Some;
+                const updatedMessage = {
+                    ...message,
+                    ...req.body,
+                    updatedAt: getCurrentDate(),
+                };
+                messagesStorage.insert(message.id, updatedMessage);
+                res.json(updatedMessage);
+            }
+        });
 
-    app.delete("/messages/:id", (req, res) => {
-        const messageId = req.params.id;
-        const deletedMessage = messagesStorage.remove(messageId);
-        if ("None" in deletedMessage) {
-            res.status(400).send(`couldn't delete a message with id=${messageId}. message not found`);
-        } else {
-            res.json(deletedMessage.Some);
-        }
-    });
+        app.delete("/messages/:id", (req, res) => {
+            const messageId = req.params.id;
+            const deletedMessage = messagesStorage.remove(messageId);
+            if ("None" in deletedMessage) {
+                res
+                    .status(400)
+                    .send(
+                        `couldn't delete a message with id=${messageId}. message not found`,
+                    );
+            } else {
+                res.json(deletedMessage.Some);
+            }
+        });
 
-    return app.listen();
-},
+        return app.listen();
+    },
     {
-        getMessages: query([], Vec(MessageIType), () => {
-            return messagesStorage.values();
+        getMessages: query([], Result(Vec(MessageIType), Error), () => {
+            const data = messagesStorage.values();
+            if (data.length <= 0) {
+                return Err({NotFound: `there are no data`});
+            }
+            return Ok(messagesStorage.values());
         }),
-        getKeys: query([], Vec(text), () => {
-            return messagesStorage.keys(0, 2);
+        getKeys: query(
+            [Opt(text), Opt(text)],
+            Result(Vec(text), Error),
+            (startIndex, lengthIndex) => {
+                if ("None" in startIndex || "None" in lengthIndex) {
+                    const storageLength = Number(messagesStorage.len());
+                    return Ok(messagesStorage.keys(0, storageLength));
+                }
+                return Ok(
+                    messagesStorage.keys(
+                        Number(startIndex.Some),
+                        Number(lengthIndex.Some),
+                    ),
+                );
+            },
+        ),
+        getMessage: query([text], Result(MessageIType, Error), (id) => {
+            if (!id) {
+                return Err({InvalidPayload: "you provided wrong data"});
+            }
+            const message = messagesStorage.get(id);
+            if ("None" in message) {
+                return Err({NotFound: `the message with id=${id} not found`});
+            }
+            return Ok(message.Some);
         }),
-        getMessage: query([text], Opt(MessageIType), (id: string) => {
-            return messagesStorage.get(id);
+        addMessage: update(
+            [text, text],
+            Result(MessageIType, Error),
+            (messageTitle, messageText) => {
+                if (!messageTitle || !messageText) {
+                    return Err({InvalidPayload: "You didnt provide all the data, try again"});
+                }
+                //TODO: allow nullish instead of string
+                const message: Message = {
+                    id: uuidv4(),
+                    createdAt: getCurrentDate().toString(),
+                    body: messageText.toString(),
+                    title: messageTitle.toString(),
+                    attachmentURL: "",
+                    updatedAt: getCurrentDate().toString(),
+                };
+
+                //TODO: what in case if there is no prev data in storage so we expect to get None but there is an error so it should return None instead of Some?
+                //I believe it is a rust/ some low-code ability.
+
+                const doubledMessage = messagesStorage.get(message.id);
+                if ("Some" in doubledMessage) {
+                    return Err({
+                        DataExist: `Message with ID: ${message.id} exist. If you want to update please use 'update' message`,
+                    });
+                }
+
+                messagesStorage.insert(message.id, message);
+                return Ok(message);
+            },
+        ),
+        resetStore: update([], Result(text, Error), () => {
+            const messagesStorageLen = messagesStorage.len();
+            if (+messagesStorageLen < 1) {
+                return Err({NotFound: "Store is empty"});
+            }
+
+            const keys = messagesStorage.keys(0, +messagesStorageLen.toString());
+            keys.forEach((key) => {
+                messagesStorage.remove(key);
+            });
+            return Ok(`Removed ${messagesStorageLen.toString()} items`);
         }),
-    });
+    },
+);
